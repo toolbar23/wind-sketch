@@ -35,6 +35,9 @@ int lastWindAngleUncorrected = 0;
 
 #define HONEYWELL_PIN A1
 
+Stream *OutputStream;
+
+
 movingAvg honeywellSensor(10);  // define the moving average object
 
 using namespace std;
@@ -59,10 +62,6 @@ typedef struct {
 
 void WindSpeed(const tN2kMsg &N2kMsg);
 
-tNMEA2000Handler NMEA2000Handlers[] = {
-  { 130306L, &WindSpeed },
-  { 0, 0 }
-};
 
 
 // Initialize static variables for RotationSensor Class
@@ -75,9 +74,22 @@ double offset = 0;
 int what = 0;
 
 // List here messages your device will transmit.
-const unsigned long TransmitMessages[] PROGMEM = { 130306L, 0 };  // This is the PGN for Wind
+const unsigned long TransmitMessages[] PROGMEM = { 130306L, 128259L, 0 };  // This is the PGN for Wind & STW
+
+
+
+void COGSOG(const tN2kMsg &N2kMsg);
+
+tNMEA2000Handler NMEA2000Handlers[]={
+  {129026L,&COGSOG},
+  {0,0}
+};
+
+
 
 void setup() {
+
+  OutputStream=&Serial;
 
   Serial.begin(115200);
  // while (!Serial);
@@ -109,13 +121,15 @@ void setup() {
   NMEA2000.SetMsgHandler(HandleNMEA2000Msg);
   NMEA2000.SetN2kCANReceiveFrameBufSize(50);
   NMEA2000.ExtendTransmitMessages(TransmitMessages);
+  
+
   NMEA2000.Open();
 
 
 
   pinMode(HONEYWELL_PIN, INPUT);
   analogReference(AR_DEFAULT);
-    analogReadResolution(12);
+  analogReadResolution(12);
 
   honeywellSensor.begin();    //Instantiates the moving average object
 
@@ -159,6 +173,51 @@ void loop() {
       
 
 }
+
+
+//*****************************************************************************
+//NMEA 2000 message handler
+void HandleNMEA2000Msg(const tN2kMsg &N2kMsg) {
+  int iHandler;
+  
+  // Find handler
+  OutputStream->print("In Main Handler: "); OutputStream->println(N2kMsg.PGN);
+  for (iHandler=0; NMEA2000Handlers[iHandler].PGN!=0 && !(N2kMsg.PGN==NMEA2000Handlers[iHandler].PGN); iHandler++);
+  
+  if (NMEA2000Handlers[iHandler].PGN!=0) {
+    NMEA2000Handlers[iHandler].Handler(N2kMsg); 
+  }
+}
+
+
+//*****************************************************************************
+void COGSOG(const tN2kMsg &N2kMsg) {
+    unsigned char SID;
+    tN2kHeadingReference HeadingReference;
+    double COG;
+    double SOG;
+    
+    if (ParseN2kCOGSOGRapid(N2kMsg,SID,HeadingReference,COG,SOG) ) {
+                      OutputStream->println("COG/SOG:");
+     /* PrintLabelValWithConversionCheckUnDef("  SID: ",SID,0,true);
+                        OutputStream->print("  reference: "); PrintN2kEnumType(HeadingReference,OutputStream);
+      PrintLabelValWithConversionCheckUnDef("  COG (deg): ",COG,&RadToDeg,true);
+      PrintLabelValWithConversionCheckUnDef("  SOG (m/s): ",SOG,0,true);
+*/
+    // fake stw
+     tN2kMsg nN2kMsg;
+     SetN2kBoatSpeed(nN2kMsg,0,SOG,SOG);
+     NMEA2000.SendMsg(nN2kMsg);
+
+    } else {
+      OutputStream->print("Failed to parse PGN: "); OutputStream->println(N2kMsg.PGN);
+
+
+    }
+}
+
+
+//*****************************************************************************
 
 double ReadWindAngle(int rotateout) {
   return DegToRad(rotateout);  //
@@ -230,17 +289,6 @@ debugln("");
     // Update Static Object Values for Wind Velocity and Angle
     WindSensor::windSpeedKnots = windSpeedKnots;
     WindSensor::windAngleDegrees = windAngleDegrees;
-  }
-}
-
-void HandleNMEA2000Msg(const tN2kMsg &N2kMsg) {  //NMEA 2000 message handler
-  int iHandler;
-  // Find handler
-  //Serial.println("got nmea2k message");
-  for (iHandler = 0; NMEA2000Handlers[iHandler].PGN != 0 && !(N2kMsg.PGN == NMEA2000Handlers[iHandler].PGN); iHandler++)
-    ;
-  if (NMEA2000Handlers[iHandler].PGN != 0) {
-    NMEA2000Handlers[iHandler].Handler(N2kMsg);
   }
 }
 
